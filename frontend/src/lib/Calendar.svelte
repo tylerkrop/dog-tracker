@@ -1,5 +1,6 @@
 <script>
-  import { getCalendar } from './api.js';
+  import { getCalendar, subscribeEvents } from './api.js';
+  import { onMount } from 'svelte';
 
   const MONTH_NAMES = [
     'January','February','March','April','May','June',
@@ -43,6 +44,8 @@
     void year; void month;
     load();
   });
+
+  onMount(() => subscribeEvents(() => { load(); }));
 
   let weeks = $derived.by(() => {
     const days = new Date(year, month, 0).getDate();

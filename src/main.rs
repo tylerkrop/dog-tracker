@@ -7,8 +7,15 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
-use sea_orm::Database;
+use sea_orm::{Database, DatabaseConnection};
 use std::net::SocketAddr;
+use tokio::sync::broadcast;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub db: DatabaseConnection,
+    pub tx: broadcast::Sender<()>,
+}
 
 #[tokio::main]
 async fn main() {
@@ -21,16 +28,19 @@ async fn main() {
 
     migration::run(&db).await.expect("Failed to run migrations");
 
+    let (tx, _) = broadcast::channel::<()>(16);
+    let state = AppState { db, tx };
+
     let app = Router::new()
-        .route("/api/today", get(handlers::get_today))
         .route("/api/feeding", post(handlers::add_feeding))
         .route("/api/feeding/{id}", delete(handlers::delete_feeding))
         .route("/api/treat", post(handlers::add_treat))
         .route("/api/treat/{id}", delete(handlers::delete_treat))
         .route("/api/calendar/{year}/{month}", get(handlers::get_calendar))
         .route("/api/day/{date}", get(handlers::get_day))
+        .route("/api/events", get(handlers::events))
         .fallback(handlers::serve_frontend)
-        .with_state(db);
+        .with_state(state);
 
     let port: u16 = std::env::var("PORT")
         .ok()

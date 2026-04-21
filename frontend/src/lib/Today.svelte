@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { getToday, addFeeding, deleteFeeding, addTreat, deleteTreat } from './api.js';
+  import { getDay, addFeeding, deleteFeeding, addTreat, deleteTreat, subscribeEvents, localTodayDate } from './api.js';
 
   let data = $state(null);
   let loading = $state(true);
@@ -10,7 +10,7 @@
 
   async function load() {
     loading = true;
-    try { data = await getToday(); }
+    try { data = await getDay(localTodayDate()); }
     finally { loading = false; }
   }
 
@@ -77,7 +77,10 @@
     return half === 1 ? '½' : '1';
   }
 
-  onMount(load);
+  onMount(() => {
+    load();
+    return subscribeEvents(() => { load(); });
+  });
 </script>
 
 {#if loading && !data}

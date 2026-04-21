@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { getDay, addFeeding, deleteFeeding, addTreat, deleteTreat } from './api.js';
+  import { getDay, addFeeding, deleteFeeding, addTreat, deleteTreat, subscribeEvents } from './api.js';
 
   let { date } = $props();
 
@@ -83,6 +83,8 @@
     void date;
     load();
   });
+
+  onMount(() => subscribeEvents(() => { load(); }));
 </script>
 
 <a href="#/calendar" class="back-link">‹ Calendar</a>

@@ -1,16 +1,23 @@
 use axum::{
     extract::{Path, State},
     http::{header, StatusCode, Uri},
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     Json,
 };
-use chrono::Local;
+use futures::stream::Stream;
 use rust_embed::Embed;
 use sea_orm::*;
 use serde::{Deserialize, Serialize};
+use std::convert::Infallible;
+use std::time::Duration;
+use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
 use crate::feeding;
 use crate::treat;
+use crate::AppState;
 
 #[derive(Embed)]
 #[folder = "frontend/dist"]
@@ -53,26 +60,26 @@ pub struct CalendarDay {
 #[derive(Deserialize)]
 pub struct AddFeedingRequest {
     pub amount_half_scoops: i32,
-    pub date: Option<String>,
+    pub fed_at: String,
+    #[serde(default)]
+    pub edited: bool,
 }
 
 #[derive(Deserialize)]
 pub struct AddTreatRequest {
     pub name: String,
-    pub date: Option<String>,
+    pub given_at: String,
+    #[serde(default)]
+    pub edited: bool,
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-/// Validate that a date string is a valid past date (today or earlier). Returns the parsed date.
-fn validate_past_date(date: &str) -> Result<chrono::NaiveDate, StatusCode> {
-    let parsed = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+/// Validate a "YYYY-MM-DD HH:MM:SS" timestamp string.
+fn validate_timestamp(ts: &str) -> Result<(), StatusCode> {
+    chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let today = Local::now().date_naive();
-    if parsed > today {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    Ok(parsed)
+    Ok(())
 }
 
 fn to_response(m: feeding::Model) -> FeedingResponse {
@@ -132,7 +139,11 @@ async fn treats_for_date(
         .await
 }
 
-fn build_day_response(date: &str, models: Vec<feeding::Model>, treat_models: Vec<treat::Model>) -> DayResponse {
+fn build_day_response(
+    date: &str,
+    models: Vec<feeding::Model>,
+    treat_models: Vec<treat::Model>,
+) -> DayResponse {
     let total: i32 = models.iter().map(|f| f.amount_half_scoops).sum();
     DayResponse {
         date: date.to_string(),
@@ -142,150 +153,118 @@ fn build_day_response(date: &str, models: Vec<feeding::Model>, treat_models: Vec
     }
 }
 
-// ── Handlers ────────────────────────────────────────────────────
-
-pub async fn get_today(
-    State(db): State<DatabaseConnection>,
-) -> Result<Json<DayResponse>, StatusCode> {
-    let today = Local::now().format("%Y-%m-%d").to_string();
-    let models = feedings_for_date(&db, &today)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let treat_models = treats_for_date(&db, &today)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(build_day_response(&today, models, treat_models)))
+fn notify(state: &AppState) {
+    let _ = state.tx.send(());
 }
 
+// ── Handlers ────────────────────────────────────────────────────
+
 pub async fn get_day(
-    State(db): State<DatabaseConnection>,
+    State(state): State<AppState>,
     Path(date): Path<String>,
 ) -> Result<Json<DayResponse>, StatusCode> {
-    // Validate date format
     chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let models = feedings_for_date(&db, &date)
+    let models = feedings_for_date(&state.db, &date)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let treat_models = treats_for_date(&db, &date)
+    let treat_models = treats_for_date(&state.db, &date)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(build_day_response(&date, models, treat_models)))
 }
 
 pub async fn add_treat(
-    State(db): State<DatabaseConnection>,
+    State(state): State<AppState>,
     Json(req): Json<AddTreatRequest>,
 ) -> Result<Json<TreatResponse>, StatusCode> {
     let name = req.name.trim().to_string();
     if name.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-
-    let today = Local::now().date_naive();
-    let (given_at, edited) = match &req.date {
-        Some(date) => {
-            let parsed = validate_past_date(date)?;
-            if parsed == today {
-                (Local::now().format("%Y-%m-%d %H:%M:%S").to_string(), false)
-            } else {
-                (format!("{date} 12:00:00"), true)
-            }
-        }
-        None => (Local::now().format("%Y-%m-%d %H:%M:%S").to_string(), false),
-    };
+    validate_timestamp(&req.given_at)?;
 
     let model = treat::ActiveModel {
         name: Set(name),
-        given_at: Set(given_at),
-        edited: Set(edited),
+        given_at: Set(req.given_at),
+        edited: Set(req.edited),
         ..Default::default()
     };
 
     let result = model
-        .insert(&db)
+        .insert(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    notify(&state);
     Ok(Json(to_treat_response(result)))
 }
 
 pub async fn delete_treat(
-    State(db): State<DatabaseConnection>,
+    State(state): State<AppState>,
     Path(id): Path<i32>,
 ) -> Result<StatusCode, StatusCode> {
     let result = treat::Entity::delete_by_id(id)
-        .exec(&db)
+        .exec(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if result.rows_affected == 0 {
         Err(StatusCode::NOT_FOUND)
     } else {
+        notify(&state);
         Ok(StatusCode::NO_CONTENT)
     }
 }
 
 pub async fn add_feeding(
-    State(db): State<DatabaseConnection>,
+    State(state): State<AppState>,
     Json(req): Json<AddFeedingRequest>,
 ) -> Result<Json<FeedingResponse>, StatusCode> {
     if req.amount_half_scoops != 1 && req.amount_half_scoops != 2 {
         return Err(StatusCode::BAD_REQUEST);
     }
-
-    let today = Local::now().date_naive();
-    let (fed_at, edited) = match &req.date {
-        Some(date) => {
-            let parsed = validate_past_date(date)?;
-            if parsed == today {
-                // Today — use real timestamp
-                (Local::now().format("%Y-%m-%d %H:%M:%S").to_string(), false)
-            } else {
-                // Past date — no timestamp, mark as edited
-                (format!("{date} 12:00:00"), true)
-            }
-        }
-        None => (Local::now().format("%Y-%m-%d %H:%M:%S").to_string(), false),
-    };
+    validate_timestamp(&req.fed_at)?;
 
     let model = feeding::ActiveModel {
         amount_half_scoops: Set(req.amount_half_scoops),
-        fed_at: Set(fed_at),
-        edited: Set(edited),
+        fed_at: Set(req.fed_at),
+        edited: Set(req.edited),
         ..Default::default()
     };
 
     let result = model
-        .insert(&db)
+        .insert(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    notify(&state);
     Ok(Json(to_response(result)))
 }
 
 pub async fn delete_feeding(
-    State(db): State<DatabaseConnection>,
+    State(state): State<AppState>,
     Path(id): Path<i32>,
 ) -> Result<StatusCode, StatusCode> {
     let result = feeding::Entity::delete_by_id(id)
-        .exec(&db)
+        .exec(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if result.rows_affected == 0 {
         Err(StatusCode::NOT_FOUND)
     } else {
+        notify(&state);
         Ok(StatusCode::NO_CONTENT)
     }
 }
 
 pub async fn get_calendar(
-    State(db): State<DatabaseConnection>,
+    State(state): State<AppState>,
     Path((year, month)): Path<(i32, u32)>,
 ) -> Result<Json<Vec<CalendarDay>>, StatusCode> {
-    let start_date = chrono::NaiveDate::from_ymd_opt(year, month, 1)
-        .ok_or(StatusCode::BAD_REQUEST)?;
+    let start_date =
+        chrono::NaiveDate::from_ymd_opt(year, month, 1).ok_or(StatusCode::BAD_REQUEST)?;
     let end_date = if month == 12 {
         chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
     } else {
@@ -299,18 +278,19 @@ pub async fn get_calendar(
     let feedings = feeding::Entity::find()
         .filter(feeding::Column::FedAt.gte(&start))
         .filter(feeding::Column::FedAt.lt(&end))
-        .all(&db)
+        .all(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let treats = treat::Entity::find()
         .filter(treat::Column::GivenAt.gte(&start))
         .filter(treat::Column::GivenAt.lt(&end))
-        .all(&db)
+        .all(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let mut daily: std::collections::HashMap<String, (i32, usize)> = std::collections::HashMap::new();
+    let mut daily: std::collections::HashMap<String, (i32, usize)> =
+        std::collections::HashMap::new();
     for f in feedings {
         let date = f.fed_at.split(' ').next().unwrap_or("").to_string();
         daily.entry(date).or_insert((0, 0)).0 += f.amount_half_scoops;
@@ -333,6 +313,22 @@ pub async fn get_calendar(
     Ok(Json(result))
 }
 
+// ── SSE ─────────────────────────────────────────────────────────
+
+pub async fn events(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.tx.subscribe();
+    // On Lagged or any tick, emit a single "invalidate" event.
+    let stream = BroadcastStream::new(rx).map(|_| Ok(Event::default().data("invalidate")));
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(25))
+            .text("keep-alive"),
+    )
+}
+
 // ── Static file serving ─────────────────────────────────────────
 
 pub async fn serve_frontend(uri: Uri) -> Response {
@@ -349,7 +345,6 @@ pub async fn serve_frontend(uri: Uri) -> Response {
             .into_response();
     }
 
-    // SPA fallback — serve index.html for any unknown path
     if let Some(file) = Assets::get("index.html") {
         return (
             StatusCode::OK,
