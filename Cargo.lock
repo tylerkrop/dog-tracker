@@ -445,6 +445,7 @@ dependencies = [
  "axum",
  "chrono",
  "futures",
+ "http-body-util",
  "mime_guess",
  "rust-embed",
  "sea-orm",
@@ -452,6 +453,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
+ "tower",
 ]
 
 [[package]]
