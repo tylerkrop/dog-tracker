@@ -13,7 +13,5 @@ export default defineConfig({
     setupFiles: ['./vitest.setup.js'],
     include: ['src/**/*.test.{js,svelte}'],
   },
-  resolve: {
-    conditions: process.env.VITEST ? ['browser'] : [],
-  },
+  resolve: process.env.VITEST ? { conditions: ['browser'] } : undefined,
 });
