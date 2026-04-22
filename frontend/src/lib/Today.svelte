@@ -7,6 +7,14 @@
   let busy = $state(false);
   let customTreatInput = $state('');
   let showCustomInput = $state(false);
+  let customInputEl = $state(null);
+
+  $effect(() => {
+    if (showCustomInput && customInputEl) {
+      customInputEl.focus();
+      customInputEl.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    }
+  });
 
   async function load() {
     loading = true;
@@ -143,6 +151,7 @@
         class="custom-input"
         placeholder="Treat name…"
         bind:value={customTreatInput}
+        bind:this={customInputEl}
         onkeydown={handleCustomKeydown}
       />
       <button class="custom-submit" onclick={submitCustomTreat} disabled={busy || !customTreatInput.trim()}>Add</button>

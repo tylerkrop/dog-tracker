@@ -156,4 +156,49 @@ describe('Calendar', () => {
     await fireEvent.click(screen.getByText('View Details'));
     expect(window.location.hash).toBe('#/');
   });
+
+  // Regression tests for the orientation-change layout bug. The calendar grid
+  // uses `aspect-ratio: 1` day cells inside a `repeat(7, 1fr)` grid, which on
+  // iOS Safari can leave row tracks stuck at landscape sizes when rotating
+  // back to portrait. The fix combines a max-width container, `minmax(0, 1fr)`
+  // grid tracks, and `min-width: 0` on the cells so tracks recompute cleanly.
+  describe('orientation layout', () => {
+    it('wraps content in a width-capped container so cells stay sane in landscape', async () => {
+      const { container } = render(Calendar);
+      await screen.findByText('May 2024');
+
+      const wrapper = container.querySelector('.calendar-container');
+      expect(wrapper).not.toBeNull();
+      // Header, grid, and summary card all live inside the wrapper.
+      expect(wrapper.querySelector('.cal-header')).not.toBeNull();
+      expect(wrapper.querySelector('.cal-grid')).not.toBeNull();
+      expect(wrapper.querySelector('.summary-card')).not.toBeNull();
+    });
+
+    it('grid uses minmax(0, 1fr) tracks and cells set min-width: 0', async () => {
+      // Styles aren't injected into jsdom by the Svelte test plugin, so assert
+      // against the source file. This guards against regressions of the CSS
+      // pieces that fix the iOS Safari rotation bug.
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const src = fs.readFileSync(
+        path.resolve('src/lib/Calendar.svelte'),
+        'utf8',
+      );
+
+      const gridMatch = src.match(/\.cal-grid\s*\{[^}]*\}/);
+      expect(gridMatch, '.cal-grid rule should be present').not.toBeNull();
+      expect(gridMatch[0]).toMatch(/grid-template-columns:\s*repeat\(7,\s*minmax\(0,\s*1fr\)\)/);
+
+      const cellMatch = src.match(/\.day-cell\s*\{[^}]*\}/);
+      expect(cellMatch, '.day-cell rule should be present').not.toBeNull();
+      expect(cellMatch[0]).toMatch(/min-width:\s*0/);
+      expect(cellMatch[0]).toMatch(/aspect-ratio:\s*1/);
+
+      const containerMatch = src.match(/\.calendar-container\s*\{[^}]*\}/);
+      expect(containerMatch, '.calendar-container rule should be present').not.toBeNull();
+      expect(containerMatch[0]).toMatch(/max-width:\s*\d+px/);
+      expect(containerMatch[0]).toMatch(/margin:\s*0\s+auto/);
+    });
+  });
 });

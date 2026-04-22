@@ -73,4 +73,20 @@ describe('App routing', () => {
     const calTab = screen.getByText('Calendar').closest('a');
     expect(calTab).toHaveClass('active');
   });
+
+  // Regression: the fixed tab-bar adds env(safe-area-inset-bottom) on devices
+  // with a home indicator, which made the bottom of the page (Custom input
+  // and the bottom row of treat buttons) sit underneath the bar. Main's
+  // bottom padding must include the safe-area inset so content clears it.
+  it('main bottom padding includes the safe-area inset', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const src = fs.readFileSync(path.resolve('src/App.svelte'), 'utf8');
+
+    const mainMatch = src.match(/main\s*\{[^}]*\}/);
+    expect(mainMatch, 'main rule should be present').not.toBeNull();
+    expect(mainMatch[0]).toMatch(
+      /padding-bottom:\s*calc\(\s*\d+px\s*\+\s*var\(--safe-bottom\)\s*\)/,
+    );
+  });
 });

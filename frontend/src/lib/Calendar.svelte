@@ -108,6 +108,7 @@
   }
 </script>
 
+<div class="calendar-container">
 <header class="cal-header">
   <button class="nav-btn" onclick={prev} aria-label="Previous month">‹</button>
   <h2>{MONTH_NAMES[month - 1]} {year}</h2>
@@ -158,8 +159,15 @@
     <button class="details-btn" onclick={viewDetails}>View Details</button>
   </div>
 {/if}
+</div>
 
 <style>
+  .calendar-container {
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
   .cal-header {
     display: flex;
     align-items: center;
@@ -191,8 +199,9 @@
 
   .cal-grid {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 4px;
+    width: 100%;
   }
 
   .day-label {
@@ -205,6 +214,7 @@
 
   .day-cell {
     aspect-ratio: 1;
+    min-width: 0;
     border-radius: 12px;
     display: flex;
     flex-direction: column;

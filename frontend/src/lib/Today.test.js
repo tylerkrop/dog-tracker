@@ -203,4 +203,41 @@ describe('Today', () => {
 
     expect(api.addTreat).toHaveBeenCalledWith('Carrot');
   });
+
+  // Regression: tapping "Custom" used to render the input behind the fixed
+  // tab-bar, leaving it un-focusable and feeling frozen. The input now
+  // auto-focuses and scrolls into view as soon as it appears.
+  describe('custom input visibility', () => {
+    it('auto-focuses the input when the Custom toggle is opened', async () => {
+      const user = userEvent.setup();
+      render(Today);
+      await screen.findByText('No feedings yet today');
+
+      await user.click(screen.getByText(/Custom/));
+      const input = await screen.findByPlaceholderText('Treat name…');
+
+      await waitFor(() => expect(document.activeElement).toBe(input));
+    });
+
+    it('scrolls the input into view when the Custom toggle is opened', async () => {
+      const scrollSpy = vi.fn();
+      // jsdom does not implement scrollIntoView; install a spy on the prototype.
+      const original = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = scrollSpy;
+      try {
+        const user = userEvent.setup();
+        render(Today);
+        await screen.findByText('No feedings yet today');
+
+        await user.click(screen.getByText(/Custom/));
+        await screen.findByPlaceholderText('Treat name…');
+
+        await waitFor(() => expect(scrollSpy).toHaveBeenCalled());
+        const args = scrollSpy.mock.calls[0][0];
+        expect(args).toMatchObject({ block: 'center' });
+      } finally {
+        Element.prototype.scrollIntoView = original;
+      }
+    });
+  });
 });

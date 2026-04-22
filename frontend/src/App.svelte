@@ -64,7 +64,7 @@
   main {
     flex: 1;
     padding: 20px 16px;
-    padding-bottom: 80px;
+    padding-bottom: calc(80px + var(--safe-bottom));
   }
 
   .tab-bar {
