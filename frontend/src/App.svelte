@@ -2,14 +2,43 @@
   import Today from './lib/Today.svelte';
   import Calendar from './lib/Calendar.svelte';
   import DayDetail from './lib/DayDetail.svelte';
+  import { getVersion } from './lib/api.js';
 
   let hash = $state(window.location.hash || '#/');
+  let updateAvailable = $state(false);
+  let initialBuildId = null;
 
   $effect(() => {
     const onHash = () => { hash = window.location.hash || '#/'; };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   });
+
+  async function checkVersion() {
+    if (updateAvailable) return;
+    try {
+      const v = await getVersion();
+      const id = `${v.version}:${v.build_id}`;
+      if (initialBuildId === null) {
+        initialBuildId = id;
+      } else if (id !== initialBuildId) {
+        updateAvailable = true;
+      }
+    } catch (_) { /* offline or transient — try again next time */ }
+  }
+
+  $effect(() => {
+    checkVersion();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') checkVersion();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  });
+
+  function reload() {
+    window.location.reload();
+  }
 
   let page = $derived.by(() => {
     if (hash.startsWith('#/calendar')) return 'calendar';
@@ -24,6 +53,13 @@
 </script>
 
 <div class="shell">
+  {#if updateAvailable}
+    <button type="button" class="update-banner" onclick={reload}>
+      <span>Update available</span>
+      <span class="update-action">Tap to refresh</span>
+    </button>
+  {/if}
+
   <main>
     {#if page === 'today'}
       <Today />
@@ -102,5 +138,33 @@
 
   .tab-label {
     font-weight: 600;
+  }
+
+  .update-banner {
+    position: sticky;
+    top: 0;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 16px;
+    padding-top: calc(10px + var(--safe-top, env(safe-area-inset-top)));
+    background: var(--primary);
+    color: white;
+    border: none;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: center;
+  }
+
+  .update-action {
+    opacity: 0.85;
+    font-weight: 500;
+  }
+  .update-action::before {
+    content: "· ";
   }
 </style>

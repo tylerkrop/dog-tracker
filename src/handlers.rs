@@ -329,7 +329,36 @@ pub async fn events(
     )
 }
 
+// ── Version ─────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct VersionResponse {
+    pub version: &'static str,
+    pub build_id: &'static str,
+}
+
+pub async fn get_version() -> Json<VersionResponse> {
+    Json(VersionResponse {
+        version: env!("CARGO_PKG_VERSION"),
+        build_id: env!("BUILD_ID"),
+    })
+}
+
 // ── Static file serving ─────────────────────────────────────────
+
+/// Pick a Cache-Control value for a given asset path.
+///
+/// Vite emits hashed filenames into `assets/`, which are safe to cache
+/// aggressively. Everything else (notably `index.html`) must always be
+/// revalidated so home-screen PWAs pick up new builds without a manual
+/// quit-and-relaunch.
+fn cache_control_for(path: &str) -> &'static str {
+    if path.starts_with("assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    }
+}
 
 pub async fn serve_frontend(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
@@ -339,7 +368,10 @@ pub async fn serve_frontend(uri: Uri) -> Response {
         let mime = mime_guess::from_path(path).first_or_octet_stream();
         return (
             StatusCode::OK,
-            [(header::CONTENT_TYPE, mime.as_ref())],
+            [
+                (header::CONTENT_TYPE, mime.as_ref()),
+                (header::CACHE_CONTROL, cache_control_for(path)),
+            ],
             file.data.to_vec(),
         )
             .into_response();
@@ -348,7 +380,10 @@ pub async fn serve_frontend(uri: Uri) -> Response {
     if let Some(file) = Assets::get("index.html") {
         return (
             StatusCode::OK,
-            [(header::CONTENT_TYPE, "text/html")],
+            [
+                (header::CONTENT_TYPE, "text/html"),
+                (header::CACHE_CONTROL, "no-cache"),
+            ],
             file.data.to_vec(),
         )
             .into_response();

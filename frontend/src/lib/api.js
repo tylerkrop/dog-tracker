@@ -93,3 +93,11 @@ export function subscribeEvents(callback) {
     _listeners.delete(callback);
   };
 }
+
+// ── App version / update detection ──────────────────────────────
+
+export async function getVersion() {
+  const res = await fetch(`${API}/api/version`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Failed to fetch version');
+  return res.json();
+}

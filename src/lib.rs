@@ -25,6 +25,7 @@ pub fn build_app(state: AppState) -> Router {
         .route("/api/calendar/{year}/{month}", get(handlers::get_calendar))
         .route("/api/day/{date}", get(handlers::get_day))
         .route("/api/events", get(handlers::events))
+        .route("/api/version", get(handlers::get_version))
         .fallback(handlers::serve_frontend)
         .with_state(state)
 }
